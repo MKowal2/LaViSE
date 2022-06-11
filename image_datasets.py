@@ -54,7 +54,7 @@ def mask_process(dim):
 
 class VisualGenome(Dataset):
 
-    def __init__(self, root_dir=None, transform=None, max_batch_size=64, mask_dim=7):
+    def __init__(self, root_dir='', transform=None, max_batch_size=64, mask_dim=7):
         self._root_dir = root_dir
         self._transform = transform
         self._samples = self._load_obj()
@@ -66,7 +66,8 @@ class VisualGenome(Dataset):
         return len(self._samples)
 
     def __getitem__(self, idx):
-        path = 'data/vg/VG_100K/%d.jpg' % self._samples[idx]['image_id']
+        # path = 'data/vg/VG_100K/%d.jpg' % self._samples[idx]['image_id']
+        path = 'vg/VG_100K/%d.jpg' % self._samples[idx]['id']
         path = os.path.join(self._root_dir, path)
 
         ori_img = Image.open(path).convert('RGB')
@@ -94,12 +95,53 @@ class VisualGenome(Dataset):
             box_mask = mask_transform(box_mask)
             masks.append(box_mask)
 
+
+
+        # path = 'vg/VG_100K/%d.jpg' % self._samples[idx]['image_id']
+        # path = os.path.join(self._root_dir, path)
+        #
+        # ori_img = Image.open(path).convert('RGB')
+        # if self._transform is not None:
+        #     img = self._transform(ori_img)
+        # else:
+        #     img = ori_img
+        #
+        # targets = []
+        # masks = []
+        # for obj in self._samples[idx]['objects']:
+        #     # obj = obj_dict['names'][0]
+        #     target = torch.zeros((len(self._labels),))
+        #     if obj in self._labels:
+        #
+        #
+        #         label = self._labels[obj]
+        #         target[label] = 1
+        #     box_mask = torch.zeros(ori_img.size)
+        #     for box_anno in self._samples[idx]['objects'][obj]:
+        #         xmin = box_anno['x']
+        #         xmax = box_anno['x'] + box_anno['w']
+        #         ymin = box_anno['y']
+        #         ymax = box_anno['y'] + box_anno['h']
+        #         box_mask[ymin:ymax, xmin:xmax] = 1
+        #     targets.append(target)
+        #     mask_transform = mask_process(self._mask_dim)
+        #     box_mask = mask_transform(box_mask)
+        #     masks.append(box_mask)
+
         return img, torch.stack(targets), torch.stack(masks)
 
     def _load_obj(self):
         dataFile = os.path.join(self._root_dir, 'vg/vg_objects.json')
         with open(dataFile) as f:
             data = json.load(f)
+
+        dataFile2 = os.path.join(self._root_dir, 'vg/vg_objects_other.json')
+        with open(dataFile2) as f:
+            data2 = json.load(f)
+
+        dataFile3 = os.path.join(self._root_dir, 'vg/vg_objects_other2.json')
+        with open(dataFile3) as f:
+            data3 = json.load(f)
         return data
 
     def _load_labels(self):

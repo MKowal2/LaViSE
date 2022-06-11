@@ -148,7 +148,7 @@ if __name__ == "__main__":
                         choices=('original', 'image', 'activation', 'projection'),
                         help='method used to explain the target filter')
     parser.add_argument('--word-embedding-dim', type=int, default=300)
-    parser.add_argument('--refer', type=str, default='vg', choices=('vg', 'coco'), help='reference dataset')
+    parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
     parser.add_argument('--num-output', type=int, default=10,
                         help='number of words used to explain the target filter')
     parser.add_argument('--model-path', type=str, default='', help='path to load the target model')

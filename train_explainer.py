@@ -7,6 +7,7 @@ from torch.utils.data.dataset import random_split
 from image_datasets import *
 from train_helpers import set_bn_eval, CSMRLoss
 from model_loader import setup_explainer
+import wandb
 
 
 def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, output_path, experiment_name,
@@ -20,19 +21,25 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
     model.train()
     model.apply(set_bn_eval)
     for _, batch in enumerate(train_loader):
+        # DEBUG
+        # if batch_index == 10:
+        #     break
+        # DEBUG
         batch_index += 1
         data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
         predict = data.clone()
         for name, module in model._modules.items():
-            if name is 'fc':
+            if name == 'fc':
                 predict = torch.flatten(predict, 1)
             predict = module(predict)
-            if name is args.layer:
+            if name == args.layer:
                 if torch.sum(mask) > 0:
                     predict = predict * mask
                 else:
                     continue
-        loss = loss_fn(predict, target[:, train_label_idx], embeddings, train_label_idx)
+
+        # loss = loss_fn(predict, target[:, train_label_idx], embeddings, train_label_idx)
+        loss = loss_fn(predict, target, embeddings, train_label_idx)
         sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
                                        torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
                                                 torch.sqrt(torch.sum(embeddings ** 2,
@@ -47,12 +54,14 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
             loss.backward()
             optimizer.step()
 
-        if batch_index % 1 == 0:
+        if batch_index % 10 == 0:
             train_log = 'Epoch {:2d}\tLoss: {:.6f}\tTrain: [{:4d}/{:4d} ({:.0f}%)]'.format(
                 epoch, loss.cpu().item(),
                 batch_index, num_batch,
                 100. * batch_index / num_batch)
-            print(train_log, end='\r')
+            print(train_log)
+            if args.wandb:
+                wandb.log({'Iter_Train_Loss': loss})
 
         if batch_index % args.save_every == 0:
             torch.save({
@@ -85,13 +94,13 @@ def validate(model, loss_fn, valid_loader, embeddings, train_label_idx, k=5):
             data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
             predict = data.clone()
             for name, module in model._modules.items():
-                if name is 'classifier' or name is 'fc':
+                if name == 'classifier' or name == 'fc':
                     if args.model == 'mobilenet':
                         predict = torch.mean(predict, dim=[2, 3])
                     else:
                         predict = torch.flatten(predict, 1)
                 predict = module(predict)
-                if name is args.layer:
+                if name == args.layer:
                     predict = predict * mask
             sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
                                            torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
@@ -102,7 +111,8 @@ def validate(model, loss_fn, valid_loader, embeddings, train_label_idx, k=5):
                 correct += target[i, pred[0]].detach().item()
                 top_k_correct += (torch.sum(target[i, pred]) > 0).detach().item()
 
-            valid_loss += loss_fn(predict, target[:, train_label_idx], embeddings, train_label_idx).data.detach().item()
+            valid_loss += loss_fn(predict, target, embeddings, train_label_idx).data.detach().item()
+            # valid_loss += loss_fn(predict, target[:, train_label_idx], embeddings, train_label_idx).data.detach().item()
         torch.cuda.empty_cache()
         # break
 
@@ -116,28 +126,34 @@ def validate(model, loss_fn, valid_loader, embeddings, train_label_idx, k=5):
 
 
 def main(args, train_rate=0.9):
+    if not args.name:
+        args.name = 'vsf_%s_%s_%s_%.1f' % (args.refer, args.model, args.layer, args.anno_rate)
+    if args.random:
+        args.name += '_random'
+
+
+    wandb.init(project="temporal_scale", name=args.name)
+    wandb.config.update(args)
+
     word_embedding = GloVe(name='6B', dim=args.word_embedding_dim)
     torch.cuda.empty_cache()
 
     model = setup_explainer(args, random_feature=args.random)
     parameters = model.fc.parameters()
     model = model.cuda()
-    if not args.name:
-        args.name = 'vsf_%s_%s_%s_%.1f' % (args.refer, args.model, args.layer, args.anno_rate)
-    if args.random:
-        args.name += '_random'
+
 
     optimizer = torch.optim.Adam(parameters, lr=1e-4)
     scheduler = ReduceLROnPlateau(optimizer, verbose=True)
 
     if args.refer == 'vg':
-        dataset = VisualGenome(root_dir=args.data_dir, transform=data_transforms['val'])
+        dataset = VisualGenome(root_dir='data', transform=data_transforms['val'])
         datasets = {}
         train_size = int(train_rate * len(dataset))
         test_size = len(dataset) - train_size
         torch.manual_seed(0)
         datasets['train'], datasets['val'] = random_split(dataset, [train_size, test_size])
-        label_index_file = os.path.join(args.data_dir, "vg_labels.pkl")
+        label_index_file = os.path.join('./data/vg', "vg_labels.pkl")
         with open(label_index_file, 'rb') as f:
             labels = pickle.load(f)
         label_index = []
@@ -156,8 +172,10 @@ def main(args, train_rate=0.9):
         label_embedding_file = "./data/coco/coco_label_embedding.pth"
         label_embedding = torch.load(label_embedding_file)
         label_index = list(label_embedding['itos'].keys())
+
+        word_embeddings_vec = word_embedding.vectors[label_index].T.cuda() # saving all word embeddings of classes into an array
         train_label_index = None
-        word_embeddings_vec = word_embedding.vectors[label_index].T.cuda()
+        # train_label_index = np.ones(len(label_index))
     else:
         raise NotImplementedError
 
@@ -178,6 +196,15 @@ def main(args, train_rate=0.9):
                                                     word_embeddings_vec, args.save_dir, args.name, train_label_index)
             ave_valid_loss, valid_acc = validate(model, loss_fn, dataloaders['val'],
                                                  word_embeddings_vec, train_label_index)
+
+            if args.wandb:
+                wandb.log({'Epoch': epoch})
+                wandb.log({'Epoch_Ave_Train_Loss': train_loss})
+                wandb.log({'Epoch_Ave_Train_Acc': train_acc})
+                wandb.log({'Epoch_Ave_Valid_Loss': ave_valid_loss})
+                wandb.log({'Epoch_Ave_Valid_Acc': valid_acc})
+                wandb.log({'LR': optimizer.param_groups[0]['lr']})
+
             train_accuracies.append(train_acc)
             valid_accuracies.append(valid_acc)
             scheduler.step(ave_valid_loss)
@@ -200,6 +227,7 @@ def main(args, train_rate=0.9):
                 plt.plot(train_loss, '-o', label='train')
                 plt.plot(ave_valid_loss, '-o', label='valid')
                 plt.xlabel('Epoch')
+                plt.ylabel('Loss (')
                 plt.legend(loc='upper right')
                 plt.savefig(os.path.join(args.save_dir, 'losses_%s.png' % args.name))
                 plt.close()
@@ -207,18 +235,19 @@ def main(args, train_rate=0.9):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', type=int, default=1)
+    parser.add_argument('--batch-size', type=int, default=512)
     parser.add_argument('--num-classes', type=int, default=2)
-    parser.add_argument('--num-workers', type=int, default=0)
+    parser.add_argument('--num-workers', type=int, default=16)
     parser.add_argument('--word-embedding-dim', type=int, default=300)
     parser.add_argument('--save-dir', type=str, default='./outputs')
     parser.add_argument('--save-every', type=int, default=1000)
-    parser.add_argument('--epochs', type=int, default=3)
-    parser.add_argument('--random', type=bool, default=False,
-                        help='Use randomly initialized models instead of pretrained feature extractors')
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
+    parser.add_argument('--wandb', type=bool, default=False, help='Use wandb for logging')
     parser.add_argument('--layer', type=str, default='layer4', help='target layer')
+    parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
-    parser.add_argument('--refer', type=str, default='vg', choices=('vg', 'coco'), help='reference dataset')
+    parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
     parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
     parser.add_argument('--name', type=str, default='', help='experiment name')
     parser.add_argument('--anno-rate', type=float, default=0.1, help='fraction of concepts used for supervision')

@@ -37,12 +37,13 @@ class CSMRLoss(torch.nn.Module):
                             torch.mm(torch.sqrt(torch.sum(output ** 2, dim=1, keepdim=True)),
                                      torch.sqrt(torch.sum(embeddings ** 2, dim=0, keepdim=True)))
         if train_label_idx is not None:
+            target_onehot = target_onehot[:, train_label_idx]
             cosine_similarity = cosine_similarity[:, train_label_idx]
             indices = torch.sum(target_onehot, dim=1) > 0
             cosine_similarity = cosine_similarity[indices]
             target_onehot = target_onehot[indices]
-        false_terms = (1 - target_onehot) * cosine_similarity
-        tmp = torch.sum(target_onehot * cosine_similarity, dim=1) / torch.sum(target_onehot, dim=1)
+        false_terms = (1 - target_onehot) * cosine_similarity # Get false terms cosine similarity
+        tmp = torch.sum(target_onehot * cosine_similarity, dim=1) / torch.sum(target_onehot, dim=1) # Normalized target cosine similarity?
         loss = (1 - target_onehot) * (self.margin - tmp.unsqueeze(1) + false_terms)
 
         loss[torch.isnan(loss)] = 0.

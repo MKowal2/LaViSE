@@ -1,0 +1,7 @@
+outputs/
+data/coco/
+data/vg/
+.vector_cache/
+*.pkl
+*.pth
+*.tar
