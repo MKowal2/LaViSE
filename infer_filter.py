@@ -151,9 +151,14 @@ if __name__ == "__main__":
     parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
     parser.add_argument('--num-output', type=int, default=10,
                         help='number of words used to explain the target filter')
+    parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
     parser.add_argument('--model-path', type=str, default='', help='path to load the target model')
     parser.add_argument('--thresh-path', type=str, help='path to save/load the thresholds')
     parser.add_argument('--max-path', type=str, help='path to save/load the max activations of all examples')
+    parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
+    parser.add_argument('--model', type=str, default='resnet50', help='target network')
+    parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
+
 
     # if filter activation projection is used
     parser.add_argument('--s', type=int, default=5,
