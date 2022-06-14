@@ -4,6 +4,8 @@ Visual-Semantic Filter Attention" to appear in CVPR 2022.
 
 Authors: Yu Yang, Seungbae Kim, Jungseock Joo
 
+Modifications by Matthew Kowal
+
 ![alt text](./img/intro.png)
 
 [//]: # (## Requirements)
