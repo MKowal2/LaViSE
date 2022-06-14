@@ -4,10 +4,26 @@ import argparse
 from image_datasets import *
 from model_loader import setup_explainer
 from torchtext.vocab import GloVe
-
+import pathlib
+from typing import Optional, Dict
+import wandb
 
 def inference(args):
     f = args.f
+
+
+    if args.wandb:
+        wandb_id_file_path = pathlib.Path('outputs/{}/runid.txt'.format(args.name))
+        if wandb_id_file_path.exists():
+            resume_id = wandb_id_file_path.read_text()
+            wandb.init(project="temporal_scale", name=args.name, resume=resume_id, config=args)
+        else:
+            print('Creating new wandb instance...', wandb_id_file_path)
+            run = wandb.init(project="temporal_scale", name=args.name, config=args)
+            wandb_id_file_path.write_text(str(run.id))
+        wandb.config.update(args)
+
+
     method = args.method
     num_top_samples = args.p
 
@@ -28,17 +44,24 @@ def inference(args):
 
     # load the target model with a trained explainer
     model = setup_explainer(args, random_feature=args.random)
+    if len(args.model_path) < 1:
+        args.model_path = 'outputs/' + args.name + '/ckpt.pth.tar'
     ckpt = torch.load(args.model_path)
     state_dict = ckpt['state_dict']
     model.load_state_dict(state_dict)
     model = model.cuda()
     model.eval()
 
-    # get the max activation of each examples on the target filter
-    max_activations = np.zeros(len(dataset))
-    if not args.max_path:
+    # get the max activation of each example on the target filter
+
+    if not os.path.exists(args.max_path):
         print('extracting max activations...')
         for k, batch in enumerate(dataloader):
+            ## DEBUG
+            # if k == 10:
+            #     break
+            ## DEBUG
+
             img = batch[0].cuda()
             x = img.clone().detach()
             for name, module in model._modules.items():
@@ -46,7 +69,10 @@ def inference(args):
                 if name is args.layer:
                     break
             x = x.cpu().detach().numpy()
-            max_activations[k] = np.max(x, axis=(-1, -2))[f]
+            if k == 0:
+                max_activations = np.zeros((x.shape[1],len(dataset)))
+            max_activations[:,k] = np.max(x.squeeze(0), axis=(-1, -2))
+            # max_activations[k] = np.max(x, axis=(-1, -2))[f]
         torch.save(max_activations, args.max_path)
         print('activations of filters saved!')
     max_activations = torch.load(args.max_path)
@@ -54,8 +80,8 @@ def inference(args):
     # sort images by their max activations
     sorted_samples = np.argsort(-max_activations, axis=1)
 
-    # load the activation threshold
-    threshold = np.load(args.thresh_path)[f]
+    # activation threshold
+    threshold = args.mask_threshold
 
     with torch.no_grad():
         start = time.time()
@@ -77,12 +103,13 @@ def inference(args):
             c = activation[:, f, :, :]
             c = c.reshape(7, 7)
             xf = cv2.resize(c, (224, 224))
+            # VISUALIZE HERE
             weight = np.amax(c)
             if weight <= 0.:
                 continue
 
             # interpret the explainer's output with the specified method
-            predict = explain(model, data_, method, activation, c, xf, threshold)
+            predict = explain(method, model, data_, activation, c, xf, threshold)
             predict_score = torch.mm(predict, embeddings) / \
                             torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
                                      torch.sqrt(torch.sum(embeddings ** 2, dim=0, keepdim=True)))
@@ -109,6 +136,9 @@ def inference(args):
 
         end = time.time()
         print('Elasped Time: %f s' % (end - start))
+
+    # might need to fix this, the goal is to save the top-k words
+    wandb.log({'Filters': {f: sorted_predict_words}})
 
     return sorted_predict_words
 
@@ -143,7 +173,7 @@ def explain(method, model, data_, activation, c, xf, threshold):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--layer', type=str, default='layer4', help='target layer')
-    parser.add_argument('--f', type=int, help='index of the target filter')
+    parser.add_argument('--f', type=int, default=0, help='index of the target filter')
     parser.add_argument('--method', type=str, default='projection',
                         choices=('original', 'image', 'activation', 'projection'),
                         help='method used to explain the target filter')
@@ -154,10 +184,13 @@ if __name__ == "__main__":
     parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
     parser.add_argument('--model-path', type=str, default='', help='path to load the target model')
     parser.add_argument('--thresh-path', type=str, help='path to save/load the thresholds')
-    parser.add_argument('--max-path', type=str, help='path to save/load the max activations of all examples')
+    parser.add_argument('--mask_threshold', type=float, default=0.04, help='path to save/load the thresholds')
+    parser.add_argument('--max-path', type=str, default='outputs/act_max.pth', help='path to save/load the max activations of all examples')
     parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
     parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
+    parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
+    parser.add_argument('--name', type=str, default='test3', help='experiment name, used for resuming wandb run')
 
 
     # if filter activation projection is used
@@ -170,3 +203,4 @@ if __name__ == "__main__":
     print(args)
 
     inference(args)
+    print()

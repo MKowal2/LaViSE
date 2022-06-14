@@ -8,6 +8,8 @@ from image_datasets import *
 from train_helpers import set_bn_eval, CSMRLoss
 from model_loader import setup_explainer
 import wandb
+import pathlib
+from typing import Optional, Dict
 
 
 def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, output_path, experiment_name,
@@ -30,7 +32,7 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
         predict = data.clone()
         for name, module in model._modules.items():
             if name == 'fc':
-                predict = torch.flatten(predict, 1)
+                predict = torch.flatten(predict, 1) # flatten GAPed vector
             predict = module(predict)
             if name == args.layer:
                 if torch.sum(mask) > 0:
@@ -69,7 +71,7 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
                 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict()
             }, os.path.join(output_path,
-                            'ckpt_%s_tmp.pth.tar' % experiment_name))
+                            'ckpt_tmp.pth.tar'))
 
         epoch_loss += loss.data.detach().item()
         torch.cuda.empty_cache()
@@ -131,9 +133,16 @@ def main(args, train_rate=0.9):
     if args.random:
         args.name += '_random'
 
+    args.save_dir = args.save_dir + '/' + args.name + '/'
+    if not os.path.exists(args.save_dir):
+        os.mkdir(args.save_dir)
 
-    wandb.init(project="temporal_scale", name=args.name)
-    wandb.config.update(args)
+
+    if args.wandb:
+        wandb_id_file_path = pathlib.Path(args.save_dir + '/'  + 'runid.txt')
+        print('Creating new wandb instance...', wandb_id_file_path)
+        run = wandb.init(project="temporal_scale", name=args.name, config=args)
+        wandb_id_file_path.write_text(str(run.id))
 
     word_embedding = GloVe(name='6B', dim=args.word_embedding_dim)
     torch.cuda.empty_cache()
@@ -190,7 +199,7 @@ def main(args, train_rate=0.9):
     best_valid_loss = 99999999.
     train_accuracies = []
     valid_accuracies = []
-    with open(os.path.join(args.save_dir, 'valid_%s.txt' % args.name), 'w') as f:
+    with open(os.path.join(args.save_dir, 'valid.txt'), 'w') as f:
         for epoch in range(args.epochs):
             train_loss, train_acc = train_one_epoch(epoch, model, loss_fn, optimizer, dataloaders['train'],
                                                     word_embeddings_vec, args.save_dir, args.name, train_label_index)
@@ -199,11 +208,11 @@ def main(args, train_rate=0.9):
 
             if args.wandb:
                 wandb.log({'Epoch': epoch})
-                wandb.log({'Epoch_Ave_Train_Loss': train_loss})
-                wandb.log({'Epoch_Ave_Train_Acc': train_acc})
-                wandb.log({'Epoch_Ave_Valid_Loss': ave_valid_loss})
-                wandb.log({'Epoch_Ave_Valid_Acc': valid_acc})
-                wandb.log({'LR': optimizer.param_groups[0]['lr']})
+                wandb.log({'Epoch': epoch, 'Epoch_Ave_Train_Loss': train_loss})
+                wandb.log({'Epoch': epoch, 'Epoch_Ave_Train_Acc': train_acc})
+                wandb.log({'Epoch': epoch, 'Epoch_Ave_Valid_Loss': ave_valid_loss})
+                wandb.log({'Epoch': epoch, 'Epoch_Ave_Valid_Acc': valid_acc})
+                wandb.log({'Epoch': epoch, 'LR': optimizer.param_groups[0]['lr']})
 
             train_accuracies.append(train_acc)
             valid_accuracies.append(valid_acc)
@@ -222,15 +231,17 @@ def main(args, train_rate=0.9):
                     'epoch': epoch,
                     'state_dict': model.state_dict(),
                     'optimizer': optimizer.state_dict()
-                }, os.path.join(args.save_dir, 'ckpt_%s.pth.tar' % args.name))
+                }, os.path.join(args.save_dir, 'ckpt_best.pth.tar'))
                 plt.figure()
                 plt.plot(train_loss, '-o', label='train')
                 plt.plot(ave_valid_loss, '-o', label='valid')
                 plt.xlabel('Epoch')
                 plt.ylabel('Loss (')
                 plt.legend(loc='upper right')
-                plt.savefig(os.path.join(args.save_dir, 'losses_%s.png' % args.name))
+                plt.savefig(os.path.join(args.save_dir, 'losses.png'))
                 plt.close()
+
+    wandb.run.summary["best_validation_loss"] = best_valid_loss
 
 
 if __name__ == "__main__":
@@ -243,13 +254,13 @@ if __name__ == "__main__":
     parser.add_argument('--save-every', type=int, default=1000)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
-    parser.add_argument('--wandb', type=bool, default=False, help='Use wandb for logging')
+    parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
     parser.add_argument('--layer', type=str, default='layer4', help='target layer')
     parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
     parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
     parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
-    parser.add_argument('--name', type=str, default='', help='experiment name')
+    parser.add_argument('--name', type=str, default='test3', help='experiment name')
     parser.add_argument('--anno-rate', type=float, default=0.1, help='fraction of concepts used for supervision')
     parser.add_argument('--margin', type=float, default=1., help='hyperparameter for margin ranking loss')
     args = parser.parse_args()
