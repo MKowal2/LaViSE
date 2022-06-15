@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="d7100f29-34ac-444e-9a47-e2a95e61649c" name="mandarb_lavise">
+        <fileTransfer rootFolder="/home/m2kowal/Research/LaViSE" accessType="SFTP" host="mandarb" port="22" sshConfigId="1b3da0e7-66c6-401f-ac94-15170ebf3ca7" sshConfig="mandarb" authAgent="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

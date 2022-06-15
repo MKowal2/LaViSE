@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" serverName="mandarb_lavise" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="cvil2">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/m2kowal/Research/LaViSE" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mandarb (1)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/m2kowal/Research/LaViSE" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="mandarb_lavise">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+          <excludedPaths>
+            <excludedPath path="/data/coco/train2017" />
+            <excludedPath path="/data/coco/val2017" />
+            <excludedPath path="/data/coco/annotations" />
+            <excludedPath path="/data/vg/VG_100K" />
+          </excludedPaths>
+        </serverdata>
+      </paths>
+    </serverData>
+  </component>
+</project>

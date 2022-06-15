@@ -188,7 +188,7 @@ class MyCocoDetection(CocoDetection):
 
 
 class MyCocoSegmentation(CocoDetection):
-    def __init__(self, root, annFile, transform=None, target_transform=None, transforms=None):
+    def __init__(self, root, annFile, transform=None, target_transform=None, transforms=None, ):
         super(CocoDetection, self).__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO
         self.coco = COCO(annFile)

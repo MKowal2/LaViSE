@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from torchtext.vocab import GloVe
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data.dataset import random_split
+from torch.nn import Upsample
 
 from image_datasets import *
 from train_helpers import set_bn_eval, CSMRLoss
@@ -16,18 +17,17 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
                     train_label_idx, k=5):
     print("\nEpoch {} starting.".format(epoch))
     epoch_loss = 0.0
-    batch_index = 0
     num_batch = len(train_loader)
     correct = 0.0
     top_k_correct = 0.0
     model.train()
     model.apply(set_bn_eval)
-    for _, batch in enumerate(train_loader):
-        # DEBUG
+    interp_on_fly = False
+    for batch_index, batch in enumerate(train_loader):
+        # # DEBUG
         # if batch_index == 10:
         #     break
-        # DEBUG
-        batch_index += 1
+        # # DEBUG
         data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
         predict = data.clone()
         for name, module in model._modules.items():
@@ -36,11 +36,19 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
             predict = module(predict)
             if name == args.layer:
                 if torch.sum(mask) > 0:
-                    predict = predict * mask
+                    # TODO: check if this is faster than implementing it in the dataloader, should be faster with batch_size >> num_workers
+                    # if the sizes don't align, set condition for resizing to true on first iteration
+                    if batch_index == 0:
+                        if mask.shape[-1] != predict.shape[-1]:
+                            interp_on_fly = True
+                            interpolate = Upsample(size=(predict.shape[2], predict.shape[3]), mode='bilinear', align_corners=False)
+                    if interp_on_fly:
+                        predict = predict * interpolate(mask)
+                    else:
+                        predict = predict * mask
                 else:
                     continue
 
-        # loss = loss_fn(predict, target[:, train_label_idx], embeddings, train_label_idx)
         loss = loss_fn(predict, target, embeddings, train_label_idx)
         sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
                                        torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
@@ -91,7 +99,8 @@ def validate(model, loss_fn, valid_loader, embeddings, train_label_idx, k=5):
     valid_loss = 0
     correct = 0.0
     top_k_correct = 0.0
-    for _, batch in enumerate(valid_loader):
+    interp_on_fly = False
+    for batch_index, batch in enumerate(valid_loader):
         with torch.no_grad():
             data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
             predict = data.clone()
@@ -103,7 +112,17 @@ def validate(model, loss_fn, valid_loader, embeddings, train_label_idx, k=5):
                         predict = torch.flatten(predict, 1)
                 predict = module(predict)
                 if name == args.layer:
-                    predict = predict * mask
+                    # predict = predict * mask
+                    # if the sizes don't align, set condition for resizing to true on first iteration
+                    if batch_index == 0:
+                        if mask.shape[-1] != predict.shape[-1]:
+                            interp_on_fly = True
+                            interpolate = Upsample(size=(predict.shape[2], predict.shape[3]), mode='bilinear',
+                                                   align_corners=False)
+                    if interp_on_fly:
+                        predict = predict * interpolate(mask)
+                    else:
+                        predict = predict * mask
             sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
                                            torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
                                                     torch.sqrt(torch.sum(embeddings ** 2,
@@ -255,12 +274,12 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
     parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
-    parser.add_argument('--layer', type=str, default='layer4', help='target layer')
+    parser.add_argument('--layer', type=str, default='layer3', help='target layer')
     parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
     parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
     parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
-    parser.add_argument('--name', type=str, default='test3', help='experiment name')
+    parser.add_argument('--name', type=str, default='debug', help='experiment name')
     parser.add_argument('--anno-rate', type=float, default=0.1, help='fraction of concepts used for supervision')
     parser.add_argument('--margin', type=float, default=1., help='hyperparameter for margin ranking loss')
     args = parser.parse_args()
