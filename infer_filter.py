@@ -7,6 +7,10 @@ from torchtext.vocab import GloVe
 import pathlib
 from tqdm import tqdm
 import wandb
+import torch
+from utils.visualization_helpers import *
+import matplotlib.pyplot as plt
+
 
 def inference(args):
     if args.wandb:
@@ -19,7 +23,6 @@ def inference(args):
             run = wandb.init(project="temporal_scale", name=args.name, config=args)
             wandb_id_file_path.write_text(str(run.id))
         wandb.config.update(args)
-
 
     method = args.method
     num_top_samples = args.p
@@ -111,6 +114,13 @@ def inference(args):
                 c = c.reshape(7, 7)
                 xf = cv2.resize(c, (224, 224))
                 # VISUALIZE HERE
+                viz_img = unnorm(data_.cpu())
+                viz_img = np.array(viz_img.squeeze(0))
+                heatmap_vis = combine_heatmap_img(viz_img, xf)
+                # TODO: Retrieve and save only top-k activated examples
+                # plt.imshow(heatmap_vis.transpose(1,2,0))
+                # plt.show()
+
                 weight = np.amax(c)
                 if weight <= 0.:
                     continue
@@ -211,7 +221,7 @@ if __name__ == "__main__":
     parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
     parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
-    parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
+    parser.add_argument('--wandb', type=bool, default=False, help='Use wandb for logging')
     parser.add_argument('--name', type=str, default='baseline_layer4', help='experiment name, used for resuming wandb run')
 
 
