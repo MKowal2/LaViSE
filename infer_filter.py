@@ -82,6 +82,13 @@ def inference(args):
     # activation threshold
     threshold = args.mask_threshold
     ### TODO: Make faster
+    if args.wandb:
+        # create wandb table where row headers are filter numbers, then add each word as column
+        columns_tmp = list(range(1,args.num_output+1))
+        columns_tmp.insert(0,'filter')
+        columns = [str(col) for col in columns_tmp]
+        data = []
+        # table = wandb.Table(columns=columns)
     for f in tqdm(args.f):
         with torch.no_grad():
             start = time.time()
@@ -139,8 +146,20 @@ def inference(args):
 
         # might need to fix this, the goal is to save the top-k words
         # TODO: Fix saving of words
-        wandb.log({'Filter {}'.format(f): sorted_predict_words})
-    print('Sorted words: {}'.format(sorted_predict_words))
+        if args.wandb:
+            data_row = ["{}".format(word) for word in sorted_predict_words]
+            data_row.insert(0, f)
+            if len(data_row) < len(columns):
+                for i in range(len(columns)):
+                    data_row.append('-')
+                    if len(data_row) == len(columns):
+                        break
+            data.append(data_row)
+
+        print('Sorted words for filter index {}: {}'.format(f, sorted_predict_words))
+
+    table = wandb.Table(data=data, columns=columns)
+    wandb.log({"Top-{} Filter_Explanations".format(args.num_output): table})
     return sorted_predict_words
 
 
@@ -175,7 +194,7 @@ def explain(method, model, data_, activation, c, xf, threshold):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--layer', type=str, default='layer4', help='target layer')
-    parser.add_argument('--f', type=list, default=[0], help='list of index of the target filters')
+    parser.add_argument('--f', type=list, default=[0,10,100,200,510], help='list of index of the target filters')
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--method', type=str, default='projection',
                         choices=('original', 'image', 'activation', 'projection'),
