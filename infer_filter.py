@@ -9,9 +9,6 @@ from typing import Optional, Dict
 import wandb
 
 def inference(args):
-    f = args.f
-
-
     if args.wandb:
         wandb_id_file_path = pathlib.Path('outputs/{}/runid.txt'.format(args.name))
         if wandb_id_file_path.exists():
@@ -82,63 +79,64 @@ def inference(args):
 
     # activation threshold
     threshold = args.mask_threshold
+    ### TODO: Make faster
+    for f in args.f:
+        with torch.no_grad():
+            start = time.time()
+            print('explaining filter %d with %d top activated images' % (f, num_top_samples))
+            filter_dataset = torch.utils.data.Subset(dataset, sorted_samples[f, :num_top_samples])
+            filter_dataloader = torch.utils.data.DataLoader(filter_dataset, batch_size=1,
+                                                            shuffle=False, num_workers=0)
+            weights = 0
+            for i, batch in enumerate(filter_dataloader):
+                if not batch[1]:
+                    continue
+                data_, annotation = batch[0].cuda(), batch[1]
+                x = data_.clone()
+                for name, module in model._modules.items():
+                    x = module(x)
+                    if name is args.layer:
+                        activation = x.detach().cpu().numpy()
+                        break
+                c = activation[:, f, :, :]
+                c = c.reshape(7, 7)
+                xf = cv2.resize(c, (224, 224))
+                # VISUALIZE HERE
+                weight = np.amax(c)
+                if weight <= 0.:
+                    continue
 
-    with torch.no_grad():
-        start = time.time()
-        print('explaining filter %d with %d top activated images' % (f, num_top_samples))
-        filter_dataset = torch.utils.data.Subset(dataset, sorted_samples[f, :num_top_samples])
-        filter_dataloader = torch.utils.data.DataLoader(filter_dataset, batch_size=1,
-                                                        shuffle=False, num_workers=0)
-        weights = 0
-        for i, batch in enumerate(filter_dataloader):
-            if not batch[1]:
-                continue
-            data_, annotation = batch[0].cuda(), batch[1]
-            x = data_.clone()
-            for name, module in model._modules.items():
-                x = module(x)
-                if name is args.layer:
-                    activation = x.detach().cpu().numpy()
-                    break
-            c = activation[:, f, :, :]
-            c = c.reshape(7, 7)
-            xf = cv2.resize(c, (224, 224))
-            # VISUALIZE HERE
-            weight = np.amax(c)
-            if weight <= 0.:
-                continue
+                # interpret the explainer's output with the specified method
+                predict = explain(method, model, data_, activation, c, xf, threshold)
+                predict_score = torch.mm(predict, embeddings) / \
+                                torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
+                                         torch.sqrt(torch.sum(embeddings ** 2, dim=0, keepdim=True)))
+                sorted_predict_score, sorted_predict = torch.sort(predict_score, dim=1, descending=True)
+                sorted_predict = sorted_predict[0, :].detach().cpu().numpy()
+                select_rank = np.repeat(sorted_predict[:args.s], int(weight))
 
-            # interpret the explainer's output with the specified method
-            predict = explain(method, model, data_, activation, c, xf, threshold)
-            predict_score = torch.mm(predict, embeddings) / \
-                            torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
-                                     torch.sqrt(torch.sum(embeddings ** 2, dim=0, keepdim=True)))
-            sorted_predict_score, sorted_predict = torch.sort(predict_score, dim=1, descending=True)
-            sorted_predict = sorted_predict[0, :].detach().cpu().numpy()
-            select_rank = np.repeat(sorted_predict[:args.s], int(weight))
+                if weights == 0:
+                    filter_rank = select_rank
+                else:
+                    filter_rank = np.concatenate((filter_rank, select_rank))
 
-            if weights == 0:
-                filter_rank = select_rank
-            else:
-                filter_rank = np.concatenate((filter_rank, select_rank))
+                weights += weight
 
-            weights += weight
+            with open('data/entities.txt') as file:
+                all_labels = [line.rstrip() for line in file]
+            (values, counts) = np.unique(filter_rank, return_counts=True)
+            ind = np.argsort(-counts)
+            sorted_predict_words = []
+            for ii in ind[:args.num_output]:
+                word = embedding_glove.itos[int(values[ii])]
+                if word in all_labels:
+                    sorted_predict_words.append(word)
 
-        with open('data/entities.txt') as file:
-            all_labels = [line.rstrip() for line in file]
-        (values, counts) = np.unique(filter_rank, return_counts=True)
-        ind = np.argsort(-counts)
-        sorted_predict_words = []
-        for ii in ind[:args.num_output]:
-            word = embedding_glove.itos[int(values[ii])]
-            if word in all_labels:
-                sorted_predict_words.append(word)
+            end = time.time()
+            print('Elasped Time: %f s' % (end - start))
 
-        end = time.time()
-        print('Elasped Time: %f s' % (end - start))
-
-    # might need to fix this, the goal is to save the top-k words
-    wandb.log({'Filters': {f: sorted_predict_words}})
+        # might need to fix this, the goal is to save the top-k words
+        wandb.log({'Filter {}'.format(f): sorted_predict_words})
 
     return sorted_predict_words
 
@@ -173,7 +171,7 @@ def explain(method, model, data_, activation, c, xf, threshold):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--layer', type=str, default='layer4', help='target layer')
-    parser.add_argument('--f', type=int, default=0, help='index of the target filter')
+    parser.add_argument('--f', type=list, default=[0], help='list of index of the target filters')
     parser.add_argument('--method', type=str, default='projection',
                         choices=('original', 'image', 'activation', 'projection'),
                         help='method used to explain the target filter')
