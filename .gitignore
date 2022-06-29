@@ -1,6 +1,4 @@
 outputs/
-data/coco/
-data/vg/
 .vector_cache/
 .idea
 *.pkl

@@ -6,16 +6,17 @@ import torch.nn as nn
 def setup_explainer(settings, hook_fn=None, random_feature=False):
     if random_feature:
         model = torchvision.models.__dict__[settings.model](pretrained=False)
-    elif settings.pretrain is None:
-        model = torchvision.models.__dict__[settings.model](pretrained=True)
+    # elif settings.pretrain is None:
     else:
-        checkpoint = torch.load(settings.pretrain)
-        if type(checkpoint).__name__ == 'OrderedDict' or type(checkpoint).__name__ == 'dict':
-            state_dict = checkpoint['state_dict']
-            model = torchvision.models.__dict__[settings.model](num_classes=settings.num_classes)
-            model.load_state_dict(state_dict)
-        else:
-            model = checkpoint
+        model = torchvision.models.__dict__[settings.model](pretrained=True)
+    # else:
+    #     checkpoint = torch.load(settings.pretrain)
+    #     if type(checkpoint).__name__ == 'OrderedDict' or type(checkpoint).__name__ == 'dict':
+    #         state_dict = checkpoint['state_dict']
+    #         model = torchvision.models.__dict__[settings.model](num_classes=settings.num_classes)
+    #         model.load_state_dict(state_dict)
+    #     else:
+    #         model = checkpoint
 
     for param in model.parameters():
         param.requires_grad = False
@@ -46,6 +47,12 @@ def setup_explainer(settings, hook_fn=None, random_feature=False):
                       bias=True))
     else:
         raise NotImplementedError
+
+    if settings.pretrain is not None:
+        checkpoint = torch.load(settings.pretrain)
+        if type(checkpoint).__name__ == 'OrderedDict' or type(checkpoint).__name__ == 'dict':
+            state_dict = checkpoint['state_dict']
+            model.load_state_dict(state_dict)
 
     if hook_fn is not None:
         model._modules.get(settings.layer).register_forward_hook(hook_fn)

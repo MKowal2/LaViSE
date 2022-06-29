@@ -188,12 +188,13 @@ class MyCocoDetection(CocoDetection):
 
 
 class MyCocoSegmentation(CocoDetection):
-    def __init__(self, root, annFile, transform=None, target_transform=None, transforms=None, ):
+    def __init__(self, root, annFile, transform=None, target_transform=None, transforms=None, inference=False):
         super(CocoDetection, self).__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO
         self.coco = COCO(annFile)
         self.ids = list(sorted(self.coco.anns.keys()))
         self.dim = 7
+        self.inference = inference
 
     def __getitem__(self, index):
         """
@@ -211,6 +212,23 @@ class MyCocoSegmentation(CocoDetection):
         mask = coco.annToMask(ann)
         label_embedding_file = "./data/coco/coco_label_embedding.pth"
         label_embedding = torch.load(label_embedding_file)
+
+
+        if self.inference:
+            ann_ids = coco.getAnnIds(imgIds=img_id)
+            target = coco.loadAnns(ann_ids)
+            target_list = []
+            for t in target:
+                mask = coco.annToMask(t)
+                im = Image.fromarray(mask)
+                mask = np.array(im.resize((224, 224)))
+                obj = list(label_embedding['stoi'].keys())[t['category_id'] - 1]
+                idxs = list(label_embedding['stoi'].values())[t['category_id'] - 1]
+                mask_dict = {'mask': mask, 'object': obj, 'idx': idxs}
+                target_list.append(mask_dict)
+
+
+
         target_onehot = torch.zeros((len(label_embedding['itos']),))
         idxs = list(label_embedding['stoi'].values())[ann['category_id'] - 1]
         for idx in idxs:
@@ -227,6 +245,8 @@ class MyCocoSegmentation(CocoDetection):
         mask_transform = mask_process(self.dim)
         mask = mask_transform(mask)
 
+        if self.inference:
+            return img, target_list
         return img, target_onehot, mask
 
 

@@ -4,6 +4,7 @@ import argparse
 from image_datasets import *
 from model_loader import setup_explainer
 from torchtext.vocab import GloVe
+import torchvision
 import pathlib
 from tqdm import tqdm
 import wandb
@@ -35,9 +36,14 @@ def inference(args):
     if args.refer == 'vg':
         dataset = VisualGenome(transform=data_transforms['val'])
     elif args.refer == 'coco':
+        # TODO: check if this should be segmentation!!! Not sure why it would be one or the other
         dataset = MyCocoDetection(root='./data/coco/val2017',
                                   annFile='./data/coco/annotations/instances_val2017.json',
                                   transform=data_transforms['val'])
+        # dataset = MyCocoSegmentation(root='./data/coco/val2017',
+        #                           annFile='./data/coco/annotations/instances_val2017.json',
+        #                           transform=data_transforms['val'],
+        #                           inference=True)
     else:
         raise NotImplementedError
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers)
@@ -47,7 +53,7 @@ def inference(args):
     if len(args.model_path) < 1:
         args.model_path = 'outputs/' + args.name + '/ckpt_best.pth.tar'
     if len(args.max_path) < 1:
-        args.max_path = 'outputs/' + args.name + '/act_max.pt'
+        args.max_path = 'outputs/' + args.name + '/act_max_{}.pt'.format(args.method)
     ckpt = torch.load(args.model_path)
     state_dict = ckpt['state_dict']
     model.load_state_dict(state_dict)
@@ -68,7 +74,7 @@ def inference(args):
             x = img.clone().detach()
             for name, module in model._modules.items():
                 x = module(x)
-                if name is args.layer:
+                if name == args.layer:
                     break
             x = x.cpu().detach().numpy()
             if k == 0:
@@ -84,15 +90,17 @@ def inference(args):
 
     # activation threshold
     threshold = args.mask_threshold
-    ### TODO: Make faster
+
     if args.wandb:
         # create wandb table where row headers are filter numbers, then add each word as column
         columns_tmp = list(range(1,args.num_output+1))
         columns_tmp.insert(0,'filter')
         columns = [str(col) for col in columns_tmp]
         data = []
-        # table = wandb.Table(columns=columns)
     for f in tqdm(args.f):
+        if args.wandb:
+            top_k_heatmaps = [0, 0, 0]
+            max_weights = np.zeros(args.num_heatmap_log)
         with torch.no_grad():
             start = time.time()
             print('explaining filter %d with %d top activated images' % (f, num_top_samples))
@@ -107,32 +115,31 @@ def inference(args):
                 x = data_.clone()
                 for name, module in model._modules.items():
                     x = module(x)
-                    if name is args.layer:
+                    if name == args.layer:
                         activation = x.detach().cpu().numpy()
                         break
                 c = activation[:, f, :, :]
-                c = c.reshape(7, 7)
+                c = c.reshape(c.shape[-1], c.shape[-1])
                 xf = cv2.resize(c, (224, 224))
-                # VISUALIZE HERE
-                viz_img = unnorm(data_.cpu())
-                viz_img = np.array(viz_img.squeeze(0))
-                heatmap_vis = combine_heatmap_img(viz_img, xf)
-                # TODO: Retrieve and save only top-k activated examples
-                # plt.imshow(heatmap_vis.transpose(1,2,0))
-                # plt.show()
-
                 weight = np.amax(c)
                 if weight <= 0.:
                     continue
 
                 # interpret the explainer's output with the specified method
                 predict = explain(method, model, data_, activation, c, xf, threshold)
+                # get score between visual feature and all possible word embeddings
                 predict_score = torch.mm(predict, embeddings) / \
                                 torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
                                          torch.sqrt(torch.sum(embeddings ** 2, dim=0, keepdim=True)))
+                # ranking the similarity, sorted_predict are descending indices of most similar words
                 sorted_predict_score, sorted_predict = torch.sort(predict_score, dim=1, descending=True)
+
                 sorted_predict = sorted_predict[0, :].detach().cpu().numpy()
-                select_rank = np.repeat(sorted_predict[:args.s], int(weight))
+                # take the top s words, and then repeat them floor(weight) times, since we use frequency of a word to determine the final concept
+                if args.activation_repeat:
+                    select_rank = np.repeat(sorted_predict[:args.s], int(weight))
+                else:
+                    select_rank = sorted_predict[:args.s]
 
                 if weights == 0:
                     filter_rank = select_rank
@@ -141,8 +148,25 @@ def inference(args):
 
                 weights += weight
 
+                # VISUALIZE HERE
+                if args.wandb:
+                    max_weights_copy = max_weights.copy()
+                    for idx, weight_max in enumerate(max_weights_copy):
+                        if weight > weight_max:
+                            max_weights[idx] = weight
+                            viz_img = unnorm(data_.cpu())
+                            viz_img = np.array(viz_img.squeeze(0))
+                            heatmap_vis = combine_heatmap_img(viz_img, xf)
+                            top_k_heatmaps[idx] = torch.tensor(heatmap_vis)
+                            ### DEBUGING ###
+                            # plt.imshow(heatmap_vis.transpose(1,2,0))
+                            # plt.show()
+                            break
+
+            # todo: check if there is an issue here where a lot of words are not checked
             with open('data/entities.txt') as file:
                 all_labels = [line.rstrip() for line in file]
+            # determine word with most frequency, this is the word used as the highest ranked concept
             (values, counts) = np.unique(filter_rank, return_counts=True)
             ind = np.argsort(-counts)
             sorted_predict_words = []
@@ -154,8 +178,7 @@ def inference(args):
             end = time.time()
             print('Elasped Time: %f s' % (end - start))
 
-        # might need to fix this, the goal is to save the top-k words
-        # TODO: Fix saving of words
+        # save the top-k words
         if args.wandb:
             data_row = ["{}".format(word) for word in sorted_predict_words]
             data_row.insert(0, f)
@@ -165,11 +188,24 @@ def inference(args):
                     if len(data_row) == len(columns):
                         break
             data.append(data_row)
+            # log heatmaps to wandb
+            filter_image_array = torchvision.utils.make_grid(top_k_heatmaps)
+            caption = "Method: {} | Filter: {} | Concept: {}".format(args.method, f, sorted_predict_words[0])
+            ##### debug
+            plt.imshow(filter_image_array.numpy().transpose(1,2,0))
+            plt.title(caption)
+            plt.show()
+            #### debug
+            # images = wandb.Image(filter_image_array, caption=caption)
+            # wandb.log({"Filter Heatmaps and Highest Concept": images})
+
+
 
         print('Sorted words for filter index {}: {}'.format(f, sorted_predict_words))
-
-    table = wandb.Table(data=data, columns=columns)
-    wandb.log({"Top-{} Filter_Explanations".format(args.num_output): table})
+        print()
+    if args.wandb:
+        table = wandb.Table(data=data, columns=columns)
+        wandb.log({"Top-{} Filter_Explanations".format(args.num_output): table})
     return sorted_predict_words
 
 
@@ -183,6 +219,7 @@ def explain(method, model, data_, activation, c, xf, threshold):
         predict = model(data)
     elif method == 'projection':
         # filter attention projection
+        # dot product of tensor and filter & c to get similarities, then normalized by sqrt of sum
         filter_embed = torch.tensor(
             np.mean(activation * c / (np.sum(c ** 2, axis=(0, 1)) ** .5), axis=(2, 3))).cuda()
         predict = model.fc(filter_embed)
@@ -204,7 +241,9 @@ def explain(method, model, data_, activation, c, xf, threshold):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--layer', type=str, default='layer4', help='target layer')
-    parser.add_argument('--f', type=list, default=[0,10,100,200,510], help='list of index of the target filters')
+    # parser.add_argument('--f', type=list, default=[0,100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500,1600,1700,1800,1900,2000],
+    parser.add_argument('--f', type=list, default=[0,50,100,150,200,250,300,350,400,450,500],
+                        help='list of index of the target filters')
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--method', type=str, default='projection',
                         choices=('original', 'image', 'activation', 'projection'),
@@ -221,8 +260,11 @@ if __name__ == "__main__":
     parser.add_argument('--pretrain', type=str, default=None, help='path to the pretrained model')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
     parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
-    parser.add_argument('--wandb', type=bool, default=False, help='Use wandb for logging')
     parser.add_argument('--name', type=str, default='baseline_layer4', help='experiment name, used for resuming wandb run')
+    parser.add_argument('--activation_repeat', type=bool, default=True, help='Weight concepts by size of activation')
+    parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
+    parser.add_argument('--save_heatmaps', type=bool, default=True, help='Option to save heatmaps to wandb')
+    parser.add_argument('--num_heatmap_log', type=int, default=3, help='Number of heatmaps to save')
 
 
     # if filter activation projection is used

@@ -1,4 +1,36 @@
-# LaViSE
+# Requirements
+
+## Data
+
+- Please follow the instructions in the 
+[COCO API README](https://github.com/cocodataset/cocoapi) and 
+[here](data/README.md) to download and setup the COCO2017 data. Link the dataset
+under ```data/coco```. The folder ```data/coco``` should contain the folders
+```val2017```, ```train2017``` and files ```annotations/instances_val2017.json```, 
+and ```annotations/instances_train2017.json```.
+
+## Packages
+PyTorch, torchvision, wandb, and torchtext. A full list can be found in `requirements.txt`.
+
+## Training
+
+to train an explainer on COCO for 50 epochs on layer4 representations of a ResNet50 trained on ImageNet, run
+```
+python train_explainer.py --layer layer4 --refer coco --wandb False --epochs 50 --name run_name
+```
+set wandb to True to log using wandb. Training on a single 24gb GPU takes 1-2 days.
+
+
+To visualize filters on wandb using the trained explainer, run:
+
+```
+python infer_filter.py --layer layer4 --name run_name --wandb True --refer coco
+```
+
+Line 200 in ```infer_filter.py``` can be uncommented to visualize the filters without wandb
+Here is the readme from the OG LaViSE repository:
+
+# OG LaViSE README
 This is the official repository for paper "Explaining Deep Convolutional Neural Networks via Unsupervised 
 Visual-Semantic Filter Attention" to appear in CVPR 2022. 
 

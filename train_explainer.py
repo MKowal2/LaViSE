@@ -24,10 +24,10 @@ def train_one_epoch(epoch, model, loss_fn, optimizer, train_loader, embeddings, 
     model.apply(set_bn_eval)
     interp_on_fly = False
     for batch_index, batch in enumerate(train_loader):
-        # # DEBUG
-        # if batch_index == 10:
-        #     break
-        # # DEBUG
+        # DEBUG
+        if batch_index == 1:
+            break
+        # DEBUG
         data, target, mask = batch[0].cuda(), batch[1].squeeze(0).cuda(), batch[2].squeeze(0).cuda()
         predict = data.clone()
         for name, module in model._modules.items():
@@ -125,8 +125,7 @@ def validate(model, loss_fn, valid_loader, embeddings, train_label_idx, k=5):
                         predict = predict * mask
             sorted_predict = torch.argsort(torch.mm(predict, embeddings) /
                                            torch.mm(torch.sqrt(torch.sum(predict ** 2, dim=1, keepdim=True)),
-                                                    torch.sqrt(torch.sum(embeddings ** 2,
-                                                                         dim=0, keepdim=True))),
+                                                    torch.sqrt(torch.sum(embeddings ** 2,dim=0, keepdim=True))),
                                            dim=1, descending=True)[:, :k]
             for i, pred in enumerate(sorted_predict):
                 correct += target[i, pred[0]].detach().item()
@@ -274,7 +273,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--random', type=bool, default=False, help='Use randomly initialized models instead of pretrained feature extractors')
     parser.add_argument('--wandb', type=bool, default=True, help='Use wandb for logging')
-    parser.add_argument('--layer', type=str, default='layer3', help='target layer')
+    parser.add_argument('--layer', type=str, default='layer4', help='target layer')
     parser.add_argument('--classifier_name', type=str, default='fc', help='name of classifier layer')
     parser.add_argument('--model', type=str, default='resnet50', help='target network')
     parser.add_argument('--refer', type=str, default='coco', choices=('vg', 'coco'), help='reference dataset')
